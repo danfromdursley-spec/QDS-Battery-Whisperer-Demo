@@ -1,372 +1,459 @@
-// QDS Battery Lab — standalone JS
-// Uses Chart.js (loaded from CDN) for plots.
+// QDS Battery Whisperer Demo
+// Synthetic pack simulator – illustrates impact of correlated noise.
+// Not a calibrated battery tester.
 
-function randn() {
-  // Box-Muller Gaussian
-  let u = 0, v = 0;
-  while (u === 0) u = Math.random();
-  while (v === 0) v = Math.random();
-  return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+let lifetimeChart;
+let healthChart;
+
+document.addEventListener("DOMContentLoaded", () => {
+  attachSlider("nCells");
+  attachSlider("maxCycles");
+  attachSlider("baseDrain");
+  attachSlider("noiseAmp");
+  attachSlider("rho", (v) => Number(v).toFixed(2));
+  attachSlider("failThresh");
+
+  setupCharts();
+  setupControls();
+  resetDefaults();
+});
+
+function attachSlider(id, formatter) {
+  const el = document.getElementById(id);
+  const valEl = document.getElementById(id + "Val");
+  const fmt =
+    formatter ||
+    ((v) => {
+      const num = Number(v);
+      return num % 1 === 0 ? num.toString() : num.toFixed(1);
+    });
+
+  const sync = () => {
+    valEl.textContent = fmt(el.value);
+  };
+
+  el.addEventListener("input", sync);
+  sync();
 }
 
-function formatFloat(x, digits) {
-  return x.toFixed(digits);
+function setupControls() {
+  document
+    .getElementById("runLifetime")
+    .addEventListener("click", simulateLifetime);
+
+  document.getElementById("resetLifetime").addEventListener("click", () => {
+    resetDefaults();
+    simulateLifetime();
+  });
+
+  document
+    .getElementById("ludicrousLifetime")
+    .addEventListener("click", () => {
+      const slider = document.getElementById("maxCycles");
+      slider.value = 1200;
+      slider.dispatchEvent(new Event("input"));
+      simulateLifetime();
+    });
 }
 
-// Lifetime simulator ------------------------------------------------------
+function resetDefaults() {
+  setSlider("nCells", 340);
+  setSlider("maxCycles", 250);
+  setSlider("baseDrain", 1.5);
+  setSlider("noiseAmp", 2.0);
+  setSlider("rho", 0.8);
+  setSlider("failThresh", 0);
+}
 
-let healthChart = null;
-let histChart = null;
+function setSlider(id, value) {
+  const el = document.getElementById(id);
+  el.value = value;
+  el.dispatchEvent(new Event("input"));
+}
+
+function getParams() {
+  return {
+    nCells: Number(document.getElementById("nCells").value),
+    maxCycles: Number(document.getElementById("maxCycles").value),
+    baseDrain: Number(document.getElementById("baseDrain").value),
+    noiseAmp: Number(document.getElementById("noiseAmp").value),
+    rho: Number(document.getElementById("rho").value),
+    failThresh: Number(document.getElementById("failThresh").value),
+  };
+}
 
 function simulateLifetime() {
-  const baseDrain = parseFloat(document.getElementById('baseDrain').value);
-  const noiseAmp = parseFloat(document.getElementById('noiseAmp').value);
-  const rho = parseFloat(document.getElementById('rho').value);
-  const nCells = parseInt(document.getElementById('nCells').value, 10);
-  const maxCycles = parseInt(document.getElementById('maxCycles').value, 10);
-  const failThresh = parseFloat(document.getElementById('failThresh').value);
+  const params = getParams();
+  const result = runPackSimulation(params);
 
-  const whiteLifetimes = [];
-  const qdsLifetimes = [];
-  let whiteSample = [];
-  let qdsSample = [];
+  updateStats(result);
+  updateLifetimeChart(result);
+  updateHealthChart(result);
+}
 
-  function runCell(model) {
-    let health = 100.0;
-    const path = [health];
-    let eps = 0;
-    for (let c = 1; c <= maxCycles; c++) {
-      let noise;
-      if (model === 'white') {
-        noise = randn() * noiseAmp;
-      } else {
-        eps = rho * eps + Math.sqrt(1 - rho * rho) * randn();
-        noise = eps * noiseAmp;
-      }
-      const stepLoss = Math.max(0, baseDrain + noise);
-      health = Math.max(0, Math.min(100, health - stepLoss));
-      path.push(health);
-      if (health <= failThresh) {
-        return { lifetime: c, path };
-      }
-    }
-    return { lifetime: maxCycles, path };
-  }
+// ---------- Simulation core ----------
+
+function runPackSimulation(params) {
+  const { nCells, maxCycles, baseDrain, noiseAmp, rho, failThresh } = params;
+
+  const hoursPerCycle = 0.25;
+  const lifetimesWhite = [];
+  const lifetimesCorr = [];
+
+  let sampleWhite = null;
+  let sampleCorr = null;
 
   for (let i = 0; i < nCells; i++) {
-    const w = runCell('white');
-    const q = runCell('qds');
-    whiteLifetimes.push(w.lifetime);
-    qdsLifetimes.push(q.lifetime);
-    if (i === 0) whiteSample = w.path;
-    if (i === 0) qdsSample = q.path;
+    const record = i === 0;
+    const white = simulateCell({
+      maxCycles,
+      baseDrain,
+      noiseAmp,
+      rho: 0,
+      failThresh,
+      recordSeries: record,
+      hoursPerCycle,
+    });
+    const corr = simulateCell({
+      maxCycles,
+      baseDrain,
+      noiseAmp,
+      rho,
+      failThresh,
+      recordSeries: record,
+      hoursPerCycle,
+    });
+
+    lifetimesWhite.push(white.cycles * hoursPerCycle);
+    lifetimesCorr.push(corr.cycles * hoursPerCycle);
+
+    if (record) {
+      sampleWhite = white.series;
+      sampleCorr = corr.series;
+    }
   }
 
-  // Build charts
-  const labels = Array.from({ length: whiteSample.length }, (_, i) => i);
+  const stats = computeSeriesStats(sampleCorr);
 
-  const healthCtx = document.getElementById('healthChart').getContext('2d');
-  if (healthChart) healthChart.destroy();
-  healthChart = new Chart(healthCtx, {
-    type: 'line',
+  const durationMedian =
+    median(lifetimesCorr.length ? lifetimesCorr : lifetimesWhite) || 0;
+
+  const earlyFailCount = lifetimesCorr.filter(
+    (h) => h < 0.5 * durationMedian
+  ).length;
+
+  return {
+    params,
+    lifetimesWhite,
+    lifetimesCorr,
+    sampleWhite,
+    sampleCorr,
+    hoursPerCycle,
+    durationMedian,
+    earlyFailCount,
+    stats,
+  };
+}
+
+function simulateCell({
+  maxCycles,
+  baseDrain,
+  noiseAmp,
+  rho,
+  failThresh,
+  recordSeries,
+  hoursPerCycle,
+}) {
+  let health = 100;
+  let noiseState = 0;
+  const series = [];
+  let cycles = 0;
+  let time = 0;
+
+  for (let i = 0; i < maxCycles; i++) {
+    const eps = gaussianRandom();
+    noiseState = rho * noiseState + (1 - rho) * eps;
+    const drain = Math.max(0, baseDrain + noiseAmp * noiseState);
+
+    health -= drain;
+    time += hoursPerCycle;
+    cycles = i + 1;
+
+    if (recordSeries) {
+      series.push({ t: time, y: health });
+    }
+
+    if (health <= failThresh) break;
+  }
+
+  return { cycles, series: recordSeries ? series : null };
+}
+
+// Box–Muller Gaussian
+let _gaussSpare = null;
+function gaussianRandom() {
+  if (_gaussSpare !== null) {
+    const v = _gaussSpare;
+    _gaussSpare = null;
+    return v;
+  }
+  let u = 0,
+    v = 0,
+    s = 0;
+  while (s === 0 || s >= 1) {
+    u = Math.random() * 2 - 1;
+    v = Math.random() * 2 - 1;
+    s = u * u + v * v;
+  }
+  const mul = Math.sqrt((-2 * Math.log(s)) / s);
+  _gaussSpare = v * mul;
+  return u * mul;
+}
+
+// Compute residual RMS + lag-1 correlation for a series
+function computeSeriesStats(series) {
+  if (!series || series.length < 4) {
+    return { rms: 0, k: 0 };
+  }
+
+  const n = series.length;
+  const xs = series.map((p) => p.t);
+  const ys = series.map((p) => p.y);
+
+  const meanX = xs.reduce((a, b) => a + b, 0) / n;
+  const meanY = ys.reduce((a, b) => a + b, 0) / n;
+
+  let num = 0;
+  let den = 0;
+  for (let i = 0; i < n; i++) {
+    const dx = xs[i] - meanX;
+    const dy = ys[i] - meanY;
+    num += dx * dy;
+    den += dx * dx;
+  }
+  const slope = den === 0 ? 0 : num / den;
+  const intercept = meanY - slope * meanX;
+
+  const residuals = ys.map((y, i) => y - (intercept + slope * xs[i]));
+
+  const rms = Math.sqrt(
+    residuals.reduce((s, r) => s + r * r, 0) / residuals.length
+  );
+
+  // Lag-1 correlation
+  const r0 = residuals.slice(0, -1);
+  const r1 = residuals.slice(1);
+
+  const mean0 = r0.reduce((a, b) => a + b, 0) / r0.length;
+  const mean1 = r1.reduce((a, b) => a + b, 0) / r1.length;
+
+  let cov = 0,
+    var0 = 0,
+    var1 = 0;
+  for (let i = 0; i < r0.length; i++) {
+    const d0 = r0[i] - mean0;
+    const d1 = r1[i] - mean1;
+    cov += d0 * d1;
+    var0 += d0 * d0;
+    var1 += d1 * d1;
+  }
+  const k =
+    var0 === 0 || var1 === 0 ? 0 : cov / Math.sqrt(var0 * var1);
+
+  return { rms, k };
+}
+
+function median(arr) {
+  if (!arr || !arr.length) return null;
+  const sorted = [...arr].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 0) {
+    return (sorted[mid - 1] + sorted[mid]) / 2;
+  }
+  return sorted[mid];
+}
+
+// ---------- Charts ----------
+
+function setupCharts() {
+  Chart.defaults.color = "#e2e8ff";
+  Chart.defaults.font.family =
+    'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+
+  const lifetimeCtx = document
+    .getElementById("lifetimeChart")
+    .getContext("2d");
+
+  lifetimeChart = new Chart(lifetimeCtx, {
+    type: "line",
     data: {
-      labels,
+      labels: [],
       datasets: [
         {
-          label: 'White noise',
-          data: whiteSample,
+          label: "White noise",
+          data: [],
           borderWidth: 2,
-          fill: false,
-          tension: 0.15
+          tension: 0.25,
+          pointRadius: 0,
+          borderColor: "#40b5ff",
         },
         {
-          label: 'QDS-style correlated noise',
-          data: qdsSample,
+          label: "QDS-style correlated",
+          data: [],
           borderWidth: 2,
-          fill: false,
-          tension: 0.15
-        }
-      ]
+          tension: 0.25,
+          pointRadius: 0,
+          borderColor: "#00e6a8",
+        },
+      ],
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
       plugins: {
-        legend: {
-          labels: { boxWidth: 12 }
-        }
+        legend: { display: false },
       },
       scales: {
-        x: { title: { display: true, text: 'Cycles' } },
-        y: { title: { display: true, text: 'Health (%)' }, min: 0, max: 100 }
-      }
-    }
+        x: {
+          title: {
+            display: true,
+            text: "Cell index",
+          },
+          grid: { color: "rgba(255,255,255,0.04)" },
+        },
+        y: {
+          title: {
+            display: true,
+            text: "Lifetime (hours)",
+          },
+          grid: { color: "rgba(255,255,255,0.04)" },
+        },
+      },
+    },
   });
 
-  function computeStats(arr) {
-    const n = arr.length;
-    if (n === 0) return { mean: 0, sd: 0 };
-    const mean = arr.reduce((a, b) => a + b, 0) / n;
-    const var_ = arr.reduce((acc, x) => acc + (x - mean) * (x - mean), 0) / n;
-    return { mean, sd: Math.sqrt(var_) };
-  }
-
-  // Histogram
-  const allTimes = whiteLifetimes.concat(qdsLifetimes);
-  const maxLifetime = Math.max(...allTimes);
-  const nBins = 12;
-  const binWidth = maxLifetime / nBins;
-  const labelsBins = [];
-  const whiteCounts = Array(nBins).fill(0);
-  const qdsCounts = Array(nBins).fill(0);
-
-  for (let i = 0; i < nBins; i++) {
-    const edge = Math.round((i + 0.5) * binWidth);
-    labelsBins.push(edge);
-  }
-
-  function fillCounts(data, counts) {
-    for (const t of data) {
-      let idx = Math.floor(t / binWidth);
-      if (idx < 0) idx = 0;
-      if (idx >= nBins) idx = nBins - 1;
-      counts[idx] += 1;
-    }
-  }
-  fillCounts(whiteLifetimes, whiteCounts);
-  fillCounts(qdsLifetimes, qdsCounts);
-
-  const histCtx = document.getElementById('histChart').getContext('2d');
-  if (histChart) histChart.destroy();
-  histChart = new Chart(histCtx, {
-    type: 'bar',
+  const healthCtx = document.getElementById("healthChart").getContext("2d");
+  healthChart = new Chart(healthCtx, {
+    type: "line",
     data: {
-      labels: labelsBins,
+      labels: [],
       datasets: [
-        { label: 'White noise', data: whiteCounts },
-        { label: 'QDS-style', data: qdsCounts }
-      ]
+        {
+          label: "White noise",
+          data: [],
+          borderWidth: 2,
+          tension: 0.25,
+          pointRadius: 0,
+          borderColor: "#40b5ff",
+        },
+        {
+          label: "QDS-style correlated",
+          data: [],
+          borderWidth: 2,
+          tension: 0.25,
+          pointRadius: 0,
+          borderColor: "#00e6a8",
+        },
+      ],
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
+      plugins: {
+        legend: { display: true },
+      },
       scales: {
-        x: { title: { display: true, text: 'Cycles to failure (binned)' } },
-        y: { title: { display: true, text: 'Count' } }
-      }
-    }
-  });
-
-  const whiteStats = computeStats(whiteLifetimes);
-  const qdsStats = computeStats(qdsLifetimes);
-  const relChange = ((qdsStats.mean - whiteStats.mean) / whiteStats.mean) * 100;
-
-  const statsDiv = document.getElementById('lifetimeStats');
-  statsDiv.innerHTML = `
-    <h3>Stats</h3>
-    <p><span class="label">White noise lifetime:</span><br>
-       Mean = <span class="highlight">${formatFloat(whiteStats.mean, 1)}</span> cycles,
-       σ = <span class="highlight">${formatFloat(whiteStats.sd, 1)}</span> cycles
-    </p>
-    <p><span class="label">QDS-style lifetime:</span><br>
-       Mean = <span class="highlight">${formatFloat(qdsStats.mean, 1)}</span> cycles,
-       σ = <span class="highlight">${formatFloat(qdsStats.sd, 1)}</span> cycles
-    </p>
-    <p><span class="label">Relative change (QDS vs white):</span><br>
-       <span class="${relChange >= 0 ? 'good' : 'bad'}">
-       ${relChange >= 0 ? '+' : ''}${formatFloat(relChange, 1)}% in mean lifetime
-       </span>
-    </p>
-    <p><span class="label">Runs simulated:</span><br>
-       ${nCells} cells per model
-    </p>
-  `;
-}
-
-// Battery curve simulator --------------------------------------------------
-
-let curveChart = null;
-
-function simulateCurve(extreme = false) {
-  let duration = parseFloat(document.getElementById('simDuration').value);
-  let drainRate = parseFloat(document.getElementById('simDrainRate').value);
-  let noiseLevel = parseFloat(document.getElementById('simNoise').value);
-  let tauMinutes = parseFloat(document.getElementById('simTau').value);
-  let resolutionMin = parseFloat(document.getElementById('simResolution').value);
-
-  if (extreme) {
-    // push parameters into more chaotic regime
-    noiseLevel *= 1.8;
-  }
-
-  const steps = Math.max(2, Math.round((duration * 60) / resolutionMin));
-  const dtHours = resolutionMin / 60.0;
-  const baseLossPerStep = drainRate * dtHours;
-
-  const times = [];
-  const health = [];
-
-  let h = 100.0;
-  let eps = 0;
-  const a = Math.exp(-resolutionMin / tauMinutes);
-  const sigma = Math.sqrt(1 - a * a);
-
-  for (let i = 0; i < steps; i++) {
-    const t = i * dtHours;
-    times.push(t);
-    health.push(h);
-
-    eps = a * eps + sigma * randn();
-    const noise = noiseLevel * eps; // in % per step
-    const loss = Math.max(0, baseLossPerStep + noise);
-    h = Math.max(0, h - loss);
-    if (h <= 0 && i < steps - 1) {
-      // stay at zero for remaining steps
-      for (let j = i + 1; j < steps; j++) {
-        times.push(j * dtHours);
-        health.push(0);
-      }
-      break;
-    }
-  }
-
-  // Trim trailing zeros to last non-zero + little tail
-  let lastIdx = health.length - 1;
-  for (let i = health.length - 1; i >= 0; i--) {
-    if (health[i] > 0 || i === 0) {
-      lastIdx = i;
-      break;
-    }
-  }
-  const trimTail = Math.min(10, health.length - lastIdx - 1);
-  const finalLen = lastIdx + 1 + trimTail;
-  const timesTrim = times.slice(0, finalLen);
-  const healthTrim = health.slice(0, finalLen);
-
-  const curveCtx = document.getElementById('curveChart').getContext('2d');
-  if (curveChart) curveChart.destroy();
-  curveChart = new Chart(curveCtx, {
-    type: 'line',
-    data: {
-      labels: timesTrim,
-      datasets: [{
-        label: 'Battery %',
-        data: healthTrim,
-        borderWidth: 2,
-        fill: false,
-        tension: 0.15
-      }]
+        x: {
+          title: {
+            display: true,
+            text: "Time (hours)",
+          },
+          grid: { color: "rgba(255,255,255,0.04)" },
+        },
+        y: {
+          title: {
+            display: true,
+            text: "State of health (%)",
+          },
+          min: 0,
+          max: 100,
+          grid: { color: "rgba(255,255,255,0.04)" },
+        },
+      },
     },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      scales: {
-        x: { title: { display: true, text: 'Time (hours)' } },
-        y: { title: { display: true, text: 'Battery (%)' }, min: 0, max: 100 }
-      }
-    }
   });
-
-  // Stats: duration until empty, average drain, residual RMS and lag-1 corr
-  const n = healthTrim.length;
-  const tEnd = timesTrim[n - 1];
-  const start = healthTrim[0];
-  const end = healthTrim[n - 1];
-
-  const used = Math.max(0, start - end);
-  const avgDrain = tEnd > 0 ? used / tEnd : 0;
-
-  // Residuals against straight line trend
-  const residuals = [];
-  for (let i = 0; i < n; i++) {
-    const t = timesTrim[i];
-    const trend = start + (end - start) * (t / tEnd);
-    residuals.push(healthTrim[i] - trend);
-  }
-
-  let meanRes = residuals.reduce((a, b) => a + b, 0) / n;
-  const rms = Math.sqrt(
-    residuals.reduce((acc, r) => acc + (r - meanRes) * (r - meanRes), 0) / n
-  );
-
-  // Lag-1 correlation
-  let num = 0, den = 0;
-  for (let i = 0; i < n - 1; i++) {
-    const x = residuals[i] - meanRes;
-    const y = residuals[i + 1] - meanRes;
-    num += x * y;
-    den += x * x;
-  }
-  const lag1 = den !== 0 ? num / den : 0;
-
-  const statsDiv = document.getElementById('curveStats');
-  const quality = (Math.abs(lag1) > 0.5 && rms > 5) ? 'bad' : 'good';
-  const text = (quality === 'bad')
-    ? 'Noticeable structure: high noise in residuals; strong correlation in noise (structured behaviour).'
-    : 'Residuals look mostly uncorrelated; behaviour close to simple noise around a trend.';
-
-  statsDiv.innerHTML = `
-    <h3>Stats</h3>
-    <p><span class="label">Duration:</span>
-       <span class="highlight">${formatFloat(tEnd, 2)} h</span></p>
-    <p><span class="label">Start → End:</span>
-       <span class="highlight">${formatFloat(start, 1)}%</span> → 
-       <span class="highlight">${formatFloat(end, 1)}%</span> (Δ ${formatFloat(used, 1)}%)</p>
-    <p><span class="label">Average drain:</span>
-       <span class="highlight">${formatFloat(avgDrain, 2)} %/h</span></p>
-    <p><span class="label">Residual RMS:</span>
-       <span class="highlight">${formatFloat(rms, 2)} %</span></p>
-    <p><span class="label">QDS-style K (lag-1 corr):</span>
-       <span class="highlight">${formatFloat(lag1, 3)}</span></p>
-    <p class="${quality}">${text}</p>
-  `;
 }
 
-// Hook up UI ---------------------------------------------------------------
+function updateLifetimeChart(result) {
+  const { lifetimesWhite, lifetimesCorr } = result;
+  const labels = lifetimesWhite.map((_, i) => i + 1);
 
-function attachSlider(id, labelId, fmt) {
-  const el = document.getElementById(id);
-  const lbl = document.getElementById(labelId);
-  const update = () => {
-    const v = parseFloat(el.value);
-    lbl.textContent = fmt ? fmt(v) : v;
-  };
-  el.addEventListener('input', update);
-  update();
+  lifetimeChart.data.labels = labels;
+  lifetimeChart.data.datasets[0].data = lifetimesWhite;
+  lifetimeChart.data.datasets[1].data = lifetimesCorr;
+  lifetimeChart.update();
 }
 
-window.addEventListener('DOMContentLoaded', () => {
-  attachSlider('baseDrain', 'baseDrainVal', v => v.toFixed(1));
-  attachSlider('noiseAmp', 'noiseAmpVal', v => v.toFixed(1));
-  attachSlider('rho', 'rhoVal', v => v.toFixed(2));
-  attachSlider('nCells', 'nCellsVal', v => v.toString());
-  attachSlider('maxCycles', 'maxCyclesVal', v => v.toString());
-  attachSlider('failThresh', 'failThreshVal', v => v.toString());
+function updateHealthChart(result) {
+  const { sampleWhite, sampleCorr } = result;
+  if (!sampleWhite || !sampleCorr) return;
 
-  attachSlider('simDuration', 'simDurationVal', v => v.toString());
-  attachSlider('simDrainRate', 'simDrainRateVal', v => v.toString());
-  attachSlider('simNoise', 'simNoiseVal', v => v.toFixed(1));
-  attachSlider('simTau', 'simTauVal', v => v.toString());
-  attachSlider('simResolution', 'simResolutionVal', v => v.toString());
+  const maxLen = Math.max(sampleWhite.length, sampleCorr.length);
+  const labels = new Array(maxLen);
 
-  document.getElementById('runLifetime').addEventListener('click', simulateLifetime);
-  document.getElementById('resetLifetime').addEventListener('click', () => {
-    document.getElementById('baseDrain').value = 1.5;
-    document.getElementById('noiseAmp').value = 2;
-    document.getElementById('rho').value = 0.8;
-    document.getElementById('nCells').value = 340;
-    document.getElementById('maxCycles').value = 1200;
-    document.getElementById('failThresh').value = 0;
-    ['baseDrain','noiseAmp','rho','nCells','maxCycles','failThresh'].forEach(id => {
-      document.getElementById(id).dispatchEvent(new Event('input'));
-    });
-    simulateLifetime();
+  for (let i = 0; i < maxLen; i++) {
+    const t =
+      (sampleWhite[i]?.t ?? sampleCorr[i]?.t ?? 0);
+    labels[i] = Number(t.toFixed(2));
+  }
+
+  const whiteData = labels.map((t) => {
+    const pt = sampleWhite.find((p) => Number(p.t.toFixed(2)) === t);
+    return pt ? pt.y : null;
   });
 
-  document.getElementById('runCurve').addEventListener('click', () => simulateCurve(false));
-  document.getElementById('runCurveChaos').addEventListener('click', () => simulateCurve(true));
+  const corrData = labels.map((t) => {
+    const pt = sampleCorr.find((p) => Number(p.t.toFixed(2)) === t);
+    return pt ? pt.y : null;
+  });
 
-  // Initial runs
-  simulateLifetime();
-  simulateCurve(false);
-});
+  healthChart.data.labels = labels;
+  healthChart.data.datasets[0].data = whiteData;
+  healthChart.data.datasets[1].data = corrData;
+  healthChart.update();
+}
+
+// ---------- UI stats ----------
+
+function updateStats(result) {
+  const { durationMedian, earlyFailCount, params, stats } = result;
+  const { nCells } = params;
+
+  const durationText =
+    durationMedian > 0 ? durationMedian.toFixed(2) + " h" : "–";
+
+  document.getElementById("statDuration").textContent = durationText;
+  document.getElementById("statEarlyFail").textContent =
+    earlyFailCount + " / " + nCells;
+  document.getElementById("statRms").textContent =
+    stats.rms > 0 ? stats.rms.toFixed(2) + " %" : "–";
+  document.getElementById("statK").textContent =
+    stats.k !== 0 ? stats.k.toFixed(3) : "–";
+
+  let comment;
+  if (durationMedian === 0) {
+    comment =
+      "Run the simulation to generate a pack and see how the correlation changes behaviour.";
+  } else if (stats.k > 0.8) {
+    comment =
+      "Very strong QDS-style structure: large, slow swings in the noise. Failures tend to clump together.";
+  } else if (stats.k > 0.4) {
+    comment =
+      "Moderate correlation: behaviour sits between pure white noise and a fully structured regime.";
+  } else {
+    comment =
+      "Low correlation: pack behaves close to white-noise randomness with a tight lifetime spread.";
+  }
+
+  document.getElementById("statComment").textContent = comment;
+}

@@ -1,142 +1,172 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <title>QDS Battery Lab — Noise & Lifetime Simulator</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8" />
+  <title>QDS Battery Whisperer – Demo Lab</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="style.css" />
+  <!-- Chart.js from CDN -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script defer src="qds_battery_lab.js"></script>
 </head>
 <body>
-  <header class="page-header">
-    <h1>QDS Battery Lab</h1>
-    <p class="subtitle">Noise, correlation and battery lifetime — QDS vs white-noise models.</p>
-  </header>
+  <div class="app-shell">
+    <header class="app-header">
+      <div class="title-block">
+        <h1>QDS Battery Whisperer</h1>
+        <p class="subtitle">
+          Phone-safe demo for exploring how <span class="accent">correlated noise</span>
+          changes battery lifetime statistics.
+        </p>
+      </div>
+      <div class="badge-row">
+        <span class="badge badge-demo">DEMO ONLY – SYNTHETIC DATA</span>
+        <span class="badge badge-open">Open QDS model prototype</span>
+      </div>
+    </header>
 
-  <main>
-    <!-- Lifetime simulator -->
-    <section class="card">
-      <h2>Lifetime simulator</h2>
-      <p class="section-desc">
-        Simulate charge / discharge cycles for a batch of cells. Compare uncorrelated (white) noise
-        with QDS-style correlated noise and see how it changes mean lifetime and spread.
-      </p>
-      <div class="grid-2">
-        <div>
-          <h3 class="controls-title">Controls</h3>
+    <main class="layout-grid">
+      <!-- LEFT: controls -->
+      <section class="card control-card">
+        <h2>Test plan</h2>
+        <p class="card-intro">
+          Set up a virtual pack and compare plain white noise with a
+          QDS-style correlated noise model.
+        </p>
+
+        <div class="control-group">
           <div class="control">
-            <label>Base drain per cycle (%)</label>
-            <input type="range" id="baseDrain" min="0.1" max="3" step="0.1" value="1.5">
-            <span class="value" id="baseDrainVal">1.5</span>
+            <label for="nCells">Cells in pack</label>
+            <div class="control-row">
+              <input type="range" id="nCells" min="50" max="600" step="10" value="340">
+              <span class="value" id="nCellsVal">340</span>
+            </div>
           </div>
+
           <div class="control">
-            <label>Noise amplitude (%)</label>
-            <input type="range" id="noiseAmp" min="0" max="5" step="0.1" value="2">
-            <span class="value" id="noiseAmpVal">2.0</span>
+            <label for="maxCycles">Cycles per run</label>
+            <div class="control-row">
+              <input type="range" id="maxCycles" min="100" max="1500" step="50" value="250">
+              <span class="value" id="maxCyclesVal">250</span>
+            </div>
           </div>
+
           <div class="control">
-            <label>Correlation ρ (0–0.99)</label>
-            <input type="range" id="rho" min="0" max="0.99" step="0.01" value="0.8">
-            <span class="value" id="rhoVal">0.80</span>
+            <label for="baseDrain">Average drain per cycle (% of SoH)</label>
+            <div class="control-row">
+              <input type="range" id="baseDrain" min="0.3" max="3.0" step="0.1" value="1.5">
+              <span class="value" id="baseDrainVal">1.5</span>
+            </div>
           </div>
+
           <div class="control">
-            <label>Number of cells (runs)</label>
-            <input type="range" id="nCells" min="50" max="800" step="10" value="340">
-            <span class="value" id="nCellsVal">340</span>
+            <label for="noiseAmp">Noise amplitude (σ, %)</label>
+            <div class="control-row">
+              <input type="range" id="noiseAmp" min="0.2" max="5.0" step="0.1" value="2.0">
+              <span class="value" id="noiseAmpVal">2.0</span>
+            </div>
           </div>
+
           <div class="control">
-            <label>Max cycles simulated</label>
-            <input type="range" id="maxCycles" min="100" max="1500" step="50" value="1200">
-            <span class="value" id="maxCyclesVal">1200</span>
+            <label for="rho">Correlation strength ρ (QDS-style)</label>
+            <div class="control-row">
+              <input type="range" id="rho" min="0" max="0.98" step="0.02" value="0.80">
+              <span class="value" id="rhoVal">0.80</span>
+            </div>
           </div>
+
           <div class="control">
-            <label>Failure threshold (%)</label>
-            <input type="range" id="failThresh" min="0" max="80" step="5" value="0">
-            <span class="value" id="failThreshVal">0</span>
-          </div>
-          <div class="buttons">
-            <button id="runLifetime">Run simulation</button>
-            <button id="resetLifetime" class="secondary">Reset defaults</button>
+            <label for="failThresh">Failure threshold (% SoH)</label>
+            <div class="control-row">
+              <input type="range" id="failThresh" min="0" max="40" step="2" value="0">
+              <span class="value" id="failThreshVal">0</span>
+            </div>
           </div>
         </div>
-        <div>
-          <h3>Sample health profile</h3>
-          <p class="mini-desc">
-            One representative cell under each noise model.
+
+        <div class="button-row">
+          <button id="runLifetime" class="btn primary">Run simulation</button>
+          <button id="resetLifetime" class="btn ghost">Reset defaults</button>
+          <button id="ludicrousLifetime" class="btn ghost">
+            Ludicrous mode (1200 cycles)
+          </button>
+        </div>
+
+        <p class="footnote">
+          This is a <strong>concept model</strong>: it shows how noise + correlation
+          shape outcomes. It is <strong>not</strong> a calibrated battery tester.
+        </p>
+      </section>
+
+      <!-- RIGHT: summary + stats -->
+      <section class="card summary-card">
+        <h2>Simulation summary</h2>
+        <div class="stats-grid">
+          <div class="stat">
+            <span class="label">Duration (median)</span>
+            <span class="value" id="statDuration">–</span>
+          </div>
+          <div class="stat">
+            <span class="label">Cells failing early</span>
+            <span class="value" id="statEarlyFail">–</span>
+          </div>
+          <div class="stat">
+            <span class="label">Residual RMS</span>
+            <span class="value" id="statRms">–</span>
+          </div>
+          <div class="stat">
+            <span class="label">QDS-style K (lag-1 corr)</span>
+            <span class="value" id="statK">–</span>
+          </div>
+        </div>
+
+        <p id="statComment" class="stat-comment">
+          Hit <span class="accent">Run simulation</span> to generate a synthetic pack and
+          see how correlated noise reshapes lifetime.
+        </p>
+
+        <div class="legend">
+          <span class="legend-item">
+            <span class="swatch swatch-blue"></span> White-noise baseline
+          </span>
+          <span class="legend-item">
+            <span class="swatch swatch-green"></span> QDS-style correlated
+          </span>
+        </div>
+      </section>
+
+      <!-- ROW 2: charts -->
+      <section class="card chart-card">
+        <div class="card-header-row">
+          <h2>Lifetime spread across cells</h2>
+          <p class="card-subtitle">
+            Each point is one cell: how long it survived before hitting the
+            failure threshold.
           </p>
+        </div>
+        <div class="chart-wrapper">
+          <canvas id="lifetimeChart"></canvas>
+        </div>
+      </section>
+
+      <section class="card chart-card">
+        <div class="card-header-row">
+          <h2>Sample health profile</h2>
+          <p class="card-subtitle">
+            One representative cell under each noise model. Same average drain,
+            different correlation structure.
+          </p>
+        </div>
+        <div class="chart-wrapper">
           <canvas id="healthChart"></canvas>
         </div>
-      </div>
+      </section>
+    </main>
 
-      <div class="results-grid">
-        <div>
-          <h3>Cycles to failure (distribution)</h3>
-          <p class="mini-desc">
-            Histogram of how long cells survive before crossing the threshold.
-          </p>
-          <canvas id="histChart"></canvas>
-        </div>
-        <div class="stats" id="lifetimeStats">
-          <!-- Filled by JS -->
-        </div>
-      </div>
-    </section>
-
-    <!-- Synthetic battery curve / real-data mimic -->
-    <section class="card">
-      <h2>Battery curve simulator</h2>
-      <p class="section-desc">
-        Generate a long battery curve with QDS-style correlated drain. Use this to try to
-        break the model or to mimic real phone / device logs.
-      </p>
-      <div class="grid-2">
-        <div>
-          <h3 class="controls-title">Simulation controls</h3>
-          <div class="control">
-            <label>Duration (hours)</label>
-            <input type="range" id="simDuration" min="6" max="96" step="3" value="48">
-            <span class="value" id="simDurationVal">48</span>
-          </div>
-          <div class="control">
-            <label>Average drain rate (%/h)</label>
-            <input type="range" id="simDrainRate" min="2" max="30" step="1" value="12">
-            <span class="value" id="simDrainRateVal">12</span>
-          </div>
-          <div class="control">
-            <label>Noise level σ (%/step)</label>
-            <input type="range" id="simNoise" min="0" max="8" step="0.2" value="4">
-            <span class="value" id="simNoiseVal">4.0</span>
-          </div>
-          <div class="control">
-            <label>QDS-style correlation time τ<sub>c</sub> (min)</label>
-            <input type="range" id="simTau" min="10" max="360" step="10" value="120">
-            <span class="value" id="simTauVal">120</span>
-          </div>
-          <div class="control">
-            <label>Resolution (minutes / step)</label>
-            <input type="range" id="simResolution" min="1" max="60" step="1" value="2">
-            <span class="value" id="simResolutionVal">2</span>
-          </div>
-          <div class="buttons">
-            <button id="runCurve">Generate simulation</button>
-            <button id="runCurveChaos" class="secondary">Extreme chaos</button>
-          </div>
-        </div>
-        <div>
-          <h3>Battery curve</h3>
-          <canvas id="curveChart"></canvas>
-        </div>
-      </div>
-      <div class="stats" id="curveStats">
-        <!-- Filled by JS -->
-      </div>
-    </section>
-  </main>
-
-  <footer class="page-footer">
-    <p>QDS Battery Lab — local toy, runs fully offline once loaded. Sliders are there to try and break the model.</p>
-  </footer>
-
-  <script src="qds_battery_lab.js"></script>
+    <footer class="app-footer">
+      QDS Battery Whisperer Demo ·
+      <span class="accent">synthetic, illustrative only</span> · built phone-first.
+    </footer>
+  </div>
 </body>
 </html>
