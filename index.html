@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>QDS Battery Lab — Noise & Lifetime Simulator</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <header class="page-header">
+    <h1>QDS Battery Lab</h1>
+    <p class="subtitle">Noise, correlation and battery lifetime — QDS vs white-noise models.</p>
+  </header>
+
+  <main>
+    <!-- Lifetime simulator -->
+    <section class="card">
+      <h2>Lifetime simulator</h2>
+      <p class="section-desc">
+        Simulate charge / discharge cycles for a batch of cells. Compare uncorrelated (white) noise
+        with QDS-style correlated noise and see how it changes mean lifetime and spread.
+      </p>
+      <div class="grid-2">
+        <div>
+          <h3 class="controls-title">Controls</h3>
+          <div class="control">
+            <label>Base drain per cycle (%)</label>
+            <input type="range" id="baseDrain" min="0.1" max="3" step="0.1" value="1.5">
+            <span class="value" id="baseDrainVal">1.5</span>
+          </div>
+          <div class="control">
+            <label>Noise amplitude (%)</label>
+            <input type="range" id="noiseAmp" min="0" max="5" step="0.1" value="2">
+            <span class="value" id="noiseAmpVal">2.0</span>
+          </div>
+          <div class="control">
+            <label>Correlation ρ (0–0.99)</label>
+            <input type="range" id="rho" min="0" max="0.99" step="0.01" value="0.8">
+            <span class="value" id="rhoVal">0.80</span>
+          </div>
+          <div class="control">
+            <label>Number of cells (runs)</label>
+            <input type="range" id="nCells" min="50" max="800" step="10" value="340">
+            <span class="value" id="nCellsVal">340</span>
+          </div>
+          <div class="control">
+            <label>Max cycles simulated</label>
+            <input type="range" id="maxCycles" min="100" max="1500" step="50" value="1200">
+            <span class="value" id="maxCyclesVal">1200</span>
+          </div>
+          <div class="control">
+            <label>Failure threshold (%)</label>
+            <input type="range" id="failThresh" min="0" max="80" step="5" value="0">
+            <span class="value" id="failThreshVal">0</span>
+          </div>
+          <div class="buttons">
+            <button id="runLifetime">Run simulation</button>
+            <button id="resetLifetime" class="secondary">Reset defaults</button>
+          </div>
+        </div>
+        <div>
+          <h3>Sample health profile</h3>
+          <p class="mini-desc">
+            One representative cell under each noise model.
+          </p>
+          <canvas id="healthChart"></canvas>
+        </div>
+      </div>
+
+      <div class="results-grid">
+        <div>
+          <h3>Cycles to failure (distribution)</h3>
+          <p class="mini-desc">
+            Histogram of how long cells survive before crossing the threshold.
+          </p>
+          <canvas id="histChart"></canvas>
+        </div>
+        <div class="stats" id="lifetimeStats">
+          <!-- Filled by JS -->
+        </div>
+      </div>
+    </section>
+
+    <!-- Synthetic battery curve / real-data mimic -->
+    <section class="card">
+      <h2>Battery curve simulator</h2>
+      <p class="section-desc">
+        Generate a long battery curve with QDS-style correlated drain. Use this to try to
+        break the model or to mimic real phone / device logs.
+      </p>
+      <div class="grid-2">
+        <div>
+          <h3 class="controls-title">Simulation controls</h3>
+          <div class="control">
+            <label>Duration (hours)</label>
+            <input type="range" id="simDuration" min="6" max="96" step="3" value="48">
+            <span class="value" id="simDurationVal">48</span>
+          </div>
+          <div class="control">
+            <label>Average drain rate (%/h)</label>
+            <input type="range" id="simDrainRate" min="2" max="30" step="1" value="12">
+            <span class="value" id="simDrainRateVal">12</span>
+          </div>
+          <div class="control">
+            <label>Noise level σ (%/step)</label>
+            <input type="range" id="simNoise" min="0" max="8" step="0.2" value="4">
+            <span class="value" id="simNoiseVal">4.0</span>
+          </div>
+          <div class="control">
+            <label>QDS-style correlation time τ<sub>c</sub> (min)</label>
+            <input type="range" id="simTau" min="10" max="360" step="10" value="120">
+            <span class="value" id="simTauVal">120</span>
+          </div>
+          <div class="control">
+            <label>Resolution (minutes / step)</label>
+            <input type="range" id="simResolution" min="1" max="60" step="1" value="2">
+            <span class="value" id="simResolutionVal">2</span>
+          </div>
+          <div class="buttons">
+            <button id="runCurve">Generate simulation</button>
+            <button id="runCurveChaos" class="secondary">Extreme chaos</button>
+          </div>
+        </div>
+        <div>
+          <h3>Battery curve</h3>
+          <canvas id="curveChart"></canvas>
+        </div>
+      </div>
+      <div class="stats" id="curveStats">
+        <!-- Filled by JS -->
+      </div>
+    </section>
+  </main>
+
+  <footer class="page-footer">
+    <p>QDS Battery Lab — local toy, runs fully offline once loaded. Sliders are there to try and break the model.</p>
+  </footer>
+
+  <script src="qds_battery_lab.js"></script>
+</body>
+</html>

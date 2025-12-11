@@ -1,0 +1,1 @@
+QDS Battery Lab — Full static pack\nDrop the QDS_Battery_Lab folder into your UV_QDS/www (or any folder you serve) and open index.html.\nRequires internet once to fetch Chart.js from CDN; after that it will usually stay cached.\n
